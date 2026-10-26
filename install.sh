@@ -31,6 +31,17 @@ ok()   { printf '%s\n' "${GREEN}[ok] $*${NC}"; }
 warn() { printf '%s\n' "${YELLOW}[warn] $*${NC}"; }
 die()  { printf '%s\n' "${RED}[error] $*${NC}" >&2; exit 1; }
 
+# Paths are expanded at runtime by the shell running this installer. A literal
+# dollar-home marker, for example from a stray escape, would create a directory
+# named after the marker instead of the real home directory. Reject it early.
+assert_runtime_path() {
+    case "$1" in
+        *'$HOME'*|*'${HOME}'*)
+            die "path contains an unexpanded home marker: $1"
+            ;;
+    esac
+}
+
 usage() {
     cat <<'EOF'
 Usage: install.sh [options]
@@ -118,13 +129,51 @@ install_file() {
 
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
 CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+assert_runtime_path "$OPENCODE_CONFIG_DIR"
+assert_runtime_path "$CLAUDE_CONFIG_DIR"
 
-# Legacy OpenCode releases read command files from "commands"; current ones
-# read "command". Mirror into the legacy directory only when it already exists.
-OPENCODE_COMMAND_DIRS=("$OPENCODE_CONFIG_DIR/command")
-if [ -d "$OPENCODE_CONFIG_DIR/commands" ]; then
-    OPENCODE_COMMAND_DIRS+=("$OPENCODE_CONFIG_DIR/commands")
-fi
+# Current OpenCode releases read command files from "commands" (plural).
+# Older builds used "command" (singular). If only the legacy directory exists,
+# link the current name to it so both paths resolve to the same files.
+OPENCODE_COMMAND_DIR="$OPENCODE_CONFIG_DIR/commands"
+OPENCODE_LEGACY_DIR="$OPENCODE_CONFIG_DIR/command"
+
+prepare_opencode_layout() {
+    mkdir -p "$OPENCODE_CONFIG_DIR"
+
+    # Repair only a broken link that we created for the legacy directory.
+    if [ -L "$OPENCODE_COMMAND_DIR" ] && [ ! -e "$OPENCODE_COMMAND_DIR" ]; then
+        link_target="$(readlink "$OPENCODE_COMMAND_DIR" 2>/dev/null || true)"
+        if [ "$link_target" = "$OPENCODE_LEGACY_DIR" ]; then
+            warn "removing broken legacy link: $OPENCODE_COMMAND_DIR"
+            rm -f -- "$OPENCODE_COMMAND_DIR"
+        else
+            die "broken symlink at $OPENCODE_COMMAND_DIR; fix it and retry"
+        fi
+    fi
+
+    if [ -d "$OPENCODE_LEGACY_DIR" ] && [ ! -e "$OPENCODE_COMMAND_DIR" ]; then
+        legacy_abs="$(cd "$OPENCODE_LEGACY_DIR" && pwd)"
+        ln -s "$legacy_abs" "$OPENCODE_COMMAND_DIR" \
+            || die "could not link $OPENCODE_COMMAND_DIR to $OPENCODE_LEGACY_DIR"
+        ok "linked $OPENCODE_COMMAND_DIR -> $legacy_abs"
+    fi
+
+    mkdir -p "$OPENCODE_COMMAND_DIR"
+}
+
+opencode_command_dirs() {
+    printf '%s\n' "$OPENCODE_COMMAND_DIR"
+    if [ -d "$OPENCODE_LEGACY_DIR" ] \
+        && [ ! "$OPENCODE_LEGACY_DIR" -ef "$OPENCODE_COMMAND_DIR" ]; then
+        printf '%s\n' "$OPENCODE_LEGACY_DIR"
+    fi
+}
+
+OPENCODE_COMMAND_DIRS=()
+while IFS= read -r dir; do
+    OPENCODE_COMMAND_DIRS+=("$dir")
+done < <(opencode_command_dirs)
 
 if [ "$UNINSTALL" -eq 1 ]; then
     info "Removing Promptify..."
@@ -154,6 +203,7 @@ info "Initializing Promptify Skill installer..."
 
 if [ "$TARGET_OPENCODE" -eq 1 ]; then
     info "Checking OpenCode directories..."
+    prepare_opencode_layout
     command_src="$(resolve_asset ".opencode/commands/promptify.md")"
     for dir in "${OPENCODE_COMMAND_DIRS[@]}"; do
         install_file "$command_src" "$dir/promptify.md"

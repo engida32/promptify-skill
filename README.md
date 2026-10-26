@@ -55,11 +55,13 @@ Place the command file where OpenCode reads slash commands:
 
 | Platform | Path |
 |---|---|
-| Linux / macOS | `~/.config/opencode/command/promptify.md` |
-| Windows | `%USERPROFILE%\.config\opencode\command\promptify.md` |
+| Linux / macOS | `~/.config/opencode/commands/promptify.md` |
+| Windows | `%USERPROFILE%\.config\opencode\commands\promptify.md` |
 
-Older OpenCode builds read from `commands/` (plural). If your config directory
-already uses that name, put the file there instead. The installer handles both.
+Current OpenCode releases use `commands/` (plural). Older builds used
+`command/` (singular). If only the legacy directory exists, the installer links
+`commands/` to it so both names resolve to the same files. If both directories
+already exist independently, it installs into both.
 
 ### 2. Claude Code
 
@@ -74,36 +76,101 @@ the entry point at `SKILL.md`:
 Other agents that scan `~/.agents/skills/` or a project-local `.claude/skills/`
 can use the same folder unchanged.
 
+### 3. MCP clients (Claude Code, Cursor, Windsurf)
+
+`mcp-config.json` is a stdio blueprint that reads the installed skill file and
+falls back to the copy in this repository:
+
+```json
+{
+  "mcpServers": {
+    "promptify": {
+      "type": "stdio",
+      "command": "sh",
+      "args": [
+        "-c",
+        "cat \"${HOME}/.claude/skills/promptify/SKILL.md\" 2>/dev/null || cat \"${PROMPTIFY_ROOT:-.}/skills/promptify/SKILL.md\""
+      ]
+    }
+  }
+}
+```
+
+Merge the `mcpServers.promptify` block into your client's MCP config. On
+Windows, start the client from Git Bash or WSL so `sh` and `cat` are on PATH.
+
+A bare `cat` process does not implement the MCP JSON-RPC handshake. Treat this
+entry as a static context blueprint. If your client requires a full server
+handshake, wrap the same `SKILL.md` file in a JSON-RPC server.
+
+### 4. OpenCode package manifest
+
+`opencode.json` carries the marketplace metadata (`name`, `identifier`,
+`version`, `author`) and a `promptify` command shortcut. OpenCode still loads
+the markdown command directly and ignores those extra metadata keys, so the
+shortcut mainly serves catalogs and package indexes. Schema-aware editors may
+flag the metadata because the published OpenCode config schema does not define
+those fields.
+
 ## 📊 Standard Usage Lifecycle
 
 1. Type `/promptify` followed by your raw idea.
-2. Read the diagnosis, the CARE-framework rewrite, and the clarifying questions.
-3. Answer them, or type `Go` to run the optimized prompt as written.
+2. Attach files with `@path` or select code in your editor when the harness supports it. Promptify reads the request (`$ARGUMENTS`), attached files (`$CONTEXT_FILES`), and the active selection (`$SELECTION`) as one payload.
+3. Read the diagnosis, the CARE-framework rewrite, and the clarifying questions.
+4. Answer them, or type `Go` to run the optimized prompt as written.
+
+If your OpenCode build does not populate `$CONTEXT_FILES` or `$SELECTION`, the
+command says so and asks for the missing material. It does not guess at file
+contents.
 
 ### Expected interception output
 
-> 🔍 **Prompt Diagnosis**: Original query lacks micro-architecture constraints,
-> base image sizes, and multi-stage pipeline declarations.
->
-> 🏗️ **Optimized Prompt Framework**:
-> `Context: Packaging a production Go microservice...`
-> `Action: Construct a multi-stage Docker build pipeline utilizing distroless...`
-> `Rules: Pin the builder image, keep the runtime layer under 30 MB, no CGO...`
->
-> ❓ **Clarifying Gaps**:
-> 1. Which Go version does your local runtime target?
-> 2. Do you need CGO enabled for any dependency?
-> 3. Should the final image run as a non-root user?
+#### 1. Prompt diagnosis
 
+```text
+- No target platform, Go version, or base image constraints.
+- No size, security, or build-cache requirements.
+- No statement about CGO or which dependencies need it.
 ```
+
+#### 2. Optimized prompt framework
+
+```text
+Context:
+Packaging a production Go microservice as a container image. The service must
+build reproducibly and run with a minimal attack surface.
+
+Action:
+Construct a multi-stage Dockerfile. Build the binary in a pinned Go builder
+image, then copy it into a distroless runtime image.
+
+Rules:
+- Pin both image tags; do not use latest.
+- Disable CGO unless a dependency requires it.
+- Run as a non-root user.
+- Keep the runtime layer under 30 MB.
+- Cache module downloads between builds.
+```
+
+#### 3. Clarifying questions
+
+```text
+1. Which Go version does your local runtime target?
+2. Do you need CGO enabled for any dependency?
+3. Should the final image run as a non-root user?
+```
+
+```text
 Please provide your answers or type 'Go' to execute.
 ```
 
 ## 🧠 What It Actually Does
 
-The command is a deliberate speed bump. It injects three constraints into the
+The command is a deliberate speed bump. It injects four constraints into the
 model's next turn:
 
+- **Harvest the context.** Read attached files and editor selections, name the
+  paths, and refuse to guess when a placeholder arrives empty or truncated.
 - **Diagnose before acting.** Name what is missing: role, context, constraints,
   output format, acceptance criteria.
 - **Rewrite into CARE.** Context, Action, Rules, plus whatever format contract
@@ -125,6 +192,8 @@ different agent, or a ticket without carrying any tool-specific syntax along.
 │   └── promptify/
 │       └── SKILL.md
 ├── install.sh
+├── mcp-config.json
+├── opencode.json
 ├── LICENSE
 └── README.md
 ```

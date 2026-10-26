@@ -1,7 +1,7 @@
 ---
 name: promptify
 description: Global interceptor skill to structure raw prompts before executing.
-version: 1.0.0
+version: 1.1.0
 argument-hint: "<raw idea>"
 user-invocable: true
 metadata:
@@ -15,6 +15,8 @@ metadata:
 When invoked via `/promptify` or explicitly called by name, pause standard operations. Do not act on or fulfill the primary objective of the request immediately.
 
 Treat the text supplied after the trigger as the target payload (`$ARGUMENTS`). If the payload is empty, ask for the raw idea and stop.
+
+If the harness also attaches files, filesystem tags, or an editor selection, treat that material as part of the payload. Preserve the paths and quote the relevant lines in the rewrite. If attached context is missing, truncated, or still shows an unexpanded placeholder, say so and ask for it instead of inventing contents.
 
 Then perform a prompt-engineering audit on that payload:
 1. Diagnose structural weaknesses (lack of role, constraints, or clear formatting guides).
