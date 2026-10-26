@@ -18,13 +18,13 @@ copy-pasteable rewrite, and waits for your answers or a single word: `Go`.
 ## 🚀 One-Click Global Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/opencode-dev/promptify-skill/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/engida32/promptify-skill/main/install.sh | bash
 ```
 
 Prefer to read before you pipe? Download it first:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/opencode-dev/promptify-skill/main/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/engida32/promptify-skill/main/install.sh
 less install.sh
 bash install.sh
 ```
