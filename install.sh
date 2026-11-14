@@ -33,6 +33,7 @@ warn() { printf '%s\n' "${YELLOW}[warn] $*${NC}"; }
 die()  { printf '%s\n' "${RED}[error] $*${NC}" >&2; exit 1; }
 
 assert_runtime_path() {
+    # shellcheck disable=SC2016 # match literal placeholders, not the expanded path
     case "$1" in
         *'$HOME'*|*'${HOME}'*)
             die "path contains an unexpanded home marker: $1"
