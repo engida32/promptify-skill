@@ -2,8 +2,9 @@
 #
 # Promptify Skill installer
 # Installs the /promptify command for OpenCode and the promptify skill for
-# Claude Code. Safe to re-run: unchanged files are skipped and modified files
-# are backed up before being replaced.
+# Claude Code and shared ~/.agents skill scanners. Safe to re-run: unchanged
+# files are skipped, modified files are backed up, and uninstall removes only
+# files recorded in the install manifest with a matching hash.
 #
 set -euo pipefail
 
@@ -31,9 +32,6 @@ ok()   { printf '%s\n' "${GREEN}[ok] $*${NC}"; }
 warn() { printf '%s\n' "${YELLOW}[warn] $*${NC}"; }
 die()  { printf '%s\n' "${RED}[error] $*${NC}" >&2; exit 1; }
 
-# Paths are expanded at runtime by the shell running this installer. A literal
-# dollar-home marker, for example from a stray escape, would create a directory
-# named after the marker instead of the real home directory. Reject it early.
 assert_runtime_path() {
     case "$1" in
         *'$HOME'*|*'${HOME}'*)
@@ -50,25 +48,30 @@ Options:
   --all         Install for every supported agent, even if not detected.
   --opencode    Install only the OpenCode command.
   --claude      Install only the Claude Code skill.
-  --uninstall   Remove files previously installed by this script.
+  --agents      Install only the shared ~/.agents skill.
+  --uninstall   Remove files recorded in the install manifest.
   -h, --help    Show this help.
 
 Environment:
   OPENCODE_CONFIG_DIR   Override ~/.config/opencode
   CLAUDE_CONFIG_DIR     Override ~/.claude
+  AGENTS_CONFIG_DIR     Override ~/.agents
+  PROMPTIFY_STATE_DIR   Override ~/.local/state/promptify
 EOF
 }
 
 TARGET_OPENCODE=0
 TARGET_CLAUDE=0
+TARGET_AGENTS=0
 UNINSTALL=0
 EXPLICIT_TARGET=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --all)       TARGET_OPENCODE=1; TARGET_CLAUDE=1; EXPLICIT_TARGET=1 ;;
+        --all)       TARGET_OPENCODE=1; TARGET_CLAUDE=1; TARGET_AGENTS=1; EXPLICIT_TARGET=1 ;;
         --opencode)  TARGET_OPENCODE=1; EXPLICIT_TARGET=1 ;;
         --claude)    TARGET_CLAUDE=1; EXPLICIT_TARGET=1 ;;
+        --agents)    TARGET_AGENTS=1; EXPLICIT_TARGET=1 ;;
         --uninstall) UNINSTALL=1 ;;
         -h|--help)   usage; exit 0 ;;
         *)           die "unknown option: $1 (try --help)" ;;
@@ -76,8 +79,6 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# Resolve the directory this script lives in. When the script is piped from
-# curl, BASH_SOURCE is empty, so assets are downloaded instead.
 SRC_ROOT=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     SRC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,42 +107,33 @@ resolve_asset() {
     printf '%s\n' "$tmp_file"
 }
 
-install_file() {
-    src_file="$1"
-    dest_file="$2"
-    mkdir -p "$(dirname "$dest_file")"
-
-    if [ -f "$dest_file" ] && cmp -s "$src_file" "$dest_file"; then
-        ok "already current: $dest_file"
-        return 0
+file_hash() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        die "sha256sum or shasum is required"
     fi
-
-    if [ -f "$dest_file" ]; then
-        backup_file="$dest_file.bak.$(date +%Y%m%d%H%M%S)"
-        cp -- "$dest_file" "$backup_file"
-        warn "backed up existing file to $backup_file"
-    fi
-
-    cp -- "$src_file" "$dest_file"
-    chmod 644 "$dest_file"
-    ok "installed: $dest_file"
 }
 
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
 CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+AGENTS_CONFIG_DIR="${AGENTS_CONFIG_DIR:-$HOME/.agents}"
+PROMPTIFY_STATE_DIR="${PROMPTIFY_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/promptify}"
+MANIFEST="$PROMPTIFY_STATE_DIR/installed.tsv"
+
 assert_runtime_path "$OPENCODE_CONFIG_DIR"
 assert_runtime_path "$CLAUDE_CONFIG_DIR"
+assert_runtime_path "$AGENTS_CONFIG_DIR"
+assert_runtime_path "$PROMPTIFY_STATE_DIR"
 
-# Current OpenCode releases read command files from "commands" (plural).
-# Older builds used "command" (singular). If only the legacy directory exists,
-# link the current name to it so both paths resolve to the same files.
 OPENCODE_COMMAND_DIR="$OPENCODE_CONFIG_DIR/commands"
 OPENCODE_LEGACY_DIR="$OPENCODE_CONFIG_DIR/command"
 
 prepare_opencode_layout() {
     mkdir -p "$OPENCODE_CONFIG_DIR"
 
-    # Repair only a broken link that we created for the legacy directory.
     if [ -L "$OPENCODE_COMMAND_DIR" ] && [ ! -e "$OPENCODE_COMMAND_DIR" ]; then
         link_target="$(readlink "$OPENCODE_COMMAND_DIR" 2>/dev/null || true)"
         if [ "$link_target" = "$OPENCODE_LEGACY_DIR" ]; then
@@ -170,25 +162,96 @@ opencode_command_dirs() {
     fi
 }
 
+record_install() {
+    dest_file="$1"
+    hash="$2"
+    mkdir -p "$PROMPTIFY_STATE_DIR"
+    tmp_manifest="$(mktemp "$PROMPTIFY_STATE_DIR/manifest.XXXXXX")"
+    if [ -f "$MANIFEST" ]; then
+        awk -F '\t' -v d="$dest_file" '$1 != d' "$MANIFEST" > "$tmp_manifest"
+    fi
+    printf '%s\t%s\n' "$dest_file" "$hash" >> "$tmp_manifest"
+    mv -f -- "$tmp_manifest" "$MANIFEST"
+}
+
+install_file() {
+    src_file="$1"
+    dest_file="$2"
+    mkdir -p "$(dirname "$dest_file")"
+
+    if [ -f "$dest_file" ] && cmp -s "$src_file" "$dest_file"; then
+        ok "already current: $dest_file"
+        record_install "$dest_file" "$(file_hash "$dest_file")"
+        return 0
+    fi
+
+    if [ -f "$dest_file" ]; then
+        backup_file="$dest_file.bak.$(date +%Y%m%d%H%M%S).$$"
+        cp -- "$dest_file" "$backup_file"
+        warn "backed up existing file to $backup_file"
+    fi
+
+    tmp_file="$(mktemp "${dest_file}.tmp.XXXXXX")"
+    cp -- "$src_file" "$tmp_file"
+    chmod 644 "$tmp_file"
+    mv -f -- "$tmp_file" "$dest_file"
+    record_install "$dest_file" "$(file_hash "$dest_file")"
+    ok "installed: $dest_file"
+}
+
+validate_skill() {
+    skill_file="$1"
+    [ -f "$skill_file" ] || die "skill file is missing: $skill_file"
+    head -n 1 "$skill_file" | grep -qx -- '---' \
+        || die "skill is missing YAML frontmatter: $skill_file"
+    grep -q '^name: promptify$' "$skill_file" \
+        || die "skill frontmatter is missing 'name: promptify': $skill_file"
+    if grep -q '^disable-model-invocation: true$' "$skill_file"; then
+        warn "skill still opts out of model invocation; Hermes may not auto-select it"
+    fi
+}
+
+uninstall() {
+    info "Removing Promptify..."
+    if [ ! -f "$MANIFEST" ]; then
+        warn "no install manifest at $MANIFEST; nothing removed"
+        return 0
+    fi
+
+    removed=0
+    kept=0
+    while IFS=$'\t' read -r dest_file expected_hash; do
+        [ -n "$dest_file" ] || continue
+        if [ ! -e "$dest_file" ]; then
+            continue
+        fi
+        current_hash="$(file_hash "$dest_file")"
+        if [ "$current_hash" = "$expected_hash" ]; then
+            rm -f -- "$dest_file"
+            ok "removed: $dest_file"
+            removed=$((removed + 1))
+            parent="$(dirname "$dest_file")"
+            case "$parent" in
+                */skills/promptify) rmdir "$parent" 2>/dev/null || true ;;
+            esac
+        else
+            warn "modified since install; left in place: $dest_file"
+            kept=$((kept + 1))
+        fi
+    done < "$MANIFEST"
+
+    rm -f -- "$MANIFEST"
+    rmdir "$PROMPTIFY_STATE_DIR" 2>/dev/null || true
+    ok "Uninstall complete: $removed removed, $kept kept. Backups (.bak.*) were left in place."
+}
+
 OPENCODE_COMMAND_DIRS=()
 while IFS= read -r dir; do
     OPENCODE_COMMAND_DIRS+=("$dir")
 done < <(opencode_command_dirs)
 
 if [ "$UNINSTALL" -eq 1 ]; then
-    info "Removing Promptify..."
-    for dir in "${OPENCODE_COMMAND_DIRS[@]}"; do
-        if [ -f "$dir/promptify.md" ]; then
-            rm -f -- "$dir/promptify.md"
-            ok "removed: $dir/promptify.md"
-        fi
-    done
-    if [ -f "$CLAUDE_CONFIG_DIR/skills/promptify/SKILL.md" ]; then
-        rm -f -- "$CLAUDE_CONFIG_DIR/skills/promptify/SKILL.md"
-        rmdir "$CLAUDE_CONFIG_DIR/skills/promptify" 2>/dev/null || true
-        ok "removed: $CLAUDE_CONFIG_DIR/skills/promptify/SKILL.md"
-    fi
-    ok "Uninstall complete. Backup files (.bak.*) were left in place."
+    uninstall
     exit 0
 fi
 
@@ -196,6 +259,9 @@ if [ "$EXPLICIT_TARGET" -eq 0 ]; then
     TARGET_OPENCODE=1
     if [ -d "$CLAUDE_CONFIG_DIR" ] || [ -d "$HOME/.config/claude" ]; then
         TARGET_CLAUDE=1
+    fi
+    if [ -d "$AGENTS_CONFIG_DIR/skills" ] || [ -d "$AGENTS_CONFIG_DIR" ]; then
+        TARGET_AGENTS=1
     fi
 fi
 
@@ -215,9 +281,19 @@ fi
 if [ "$TARGET_CLAUDE" -eq 1 ]; then
     info "Mapping Claude Code skill layer..."
     skill_src="$(resolve_asset "skills/promptify/SKILL.md")"
+    validate_skill "$skill_src"
     install_file "$skill_src" "$CLAUDE_CONFIG_DIR/skills/promptify/SKILL.md"
 else
     warn "Skipped Claude Code (not detected). Use --claude to force."
+fi
+
+if [ "$TARGET_AGENTS" -eq 1 ]; then
+    info "Mapping shared agents skill layer..."
+    skill_src="$(resolve_asset "skills/promptify/SKILL.md")"
+    validate_skill "$skill_src"
+    install_file "$skill_src" "$AGENTS_CONFIG_DIR/skills/promptify/SKILL.md"
+else
+    warn "Skipped shared agents skill (not detected). Use --agents to force."
 fi
 
 ok "Promptify installation complete. Restart your session and run /promptify."

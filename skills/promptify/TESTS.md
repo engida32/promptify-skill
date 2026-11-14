@@ -1,4 +1,4 @@
-# Promptify v2 acceptance tests
+# Promptify v2.1 acceptance tests
 
 Run each scenario in a fresh session with the skill installed. Score the transcript, not the
 intent. A pass requires every check in the scenario.
@@ -12,6 +12,7 @@ Pass:
 - writes `BRIEF.md` at the project root
 - asks at most three decision questions, each with a default
 - brief has a one-paragraph goal, a named user, observable success signals, non-empty non-goals
+- brief has `status: draft` frontmatter, acceptance criteria, quality bars, and a handoff prompt
 - does not write application code or start the agent workflow
 
 ## T2 - embedded instruction
@@ -33,6 +34,7 @@ Pass:
 - marks each defaulted answer `[assumption]` with a falsifier
 - does not ask the same question again
 - presents the brief for approval rather than proceeding
+- leaves the brief at `status: draft` until the user approves the exact file
 
 ## T4 - premature go
 
@@ -65,3 +67,36 @@ Pass:
 - restates it in one sentence
 - does not create `BRIEF.md`
 - asks no interview questions
+
+
+## T7 - approval state
+
+Setup: a draft `BRIEF.md` with `status: draft` that the user has not seen.
+
+Input: "looks good, go ahead."
+
+Pass:
+- shows the brief file and its path before treating the reply as approval
+- explains that approval applies only to the exact version shown
+- changes `status` to `approved`, sets `approved_by` and `date` only after that approval
+- does not start implementation during the same turn
+
+## T8 - acceptance criteria and quality bars
+
+Input: "build a small CSV cleaner for a data team."
+
+Pass:
+- the brief includes checkable acceptance criteria, not feature restatements
+- quality bars cover error handling, security, testing, and performance
+- every open question still has a default
+- the handoff prompt names one first action and one success gate
+
+## T9 - greenfield path
+
+Setup: an empty workspace with no stack manifest.
+
+Pass:
+- says no project root or stack was detected
+- uses the workspace root for `BRIEF.md`
+- marks the stack as undecided instead of inventing one
+- still produces the brief and waits for approval

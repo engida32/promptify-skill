@@ -5,7 +5,7 @@
       "command": "sh",
       "args": [
         "-c",
-        "cat \"${HOME}/.claude/skills/promptify/SKILL.md\" 2>/dev/null || cat \"${PROMPTIFY_ROOT:-.}/skills/promptify/SKILL.md\""
+        "cat \"${HOME}/.agents/skills/promptify/SKILL.md\" 2>/dev/null || cat \"${HOME}/.claude/skills/promptify/SKILL.md\" 2>/dev/null || cat \"${PROMPTIFY_ROOT:-.}/skills/promptify/SKILL.md\""
       ]
     }
   }

@@ -1,25 +1,28 @@
 # Promptify
 
-A command for OpenCode, Claude Code, and other terminal agents. It turns a rough idea into a
-decision-ready brief before the agent starts building.
+A command and skill for OpenCode, Claude Code, Hermes, and other terminal agents. It turns a rough
+idea into a decision-ready brief before the agent starts building.
 
 Promptify is deliberately slow at the start. A vague prompt usually produces confident work in the
 wrong direction. Promptify stops, names what is missing, asks only the decisions you own, and writes
 the result to `BRIEF.md`. Work starts after you approve that file, not after you approve a rewrite
 you have not read.
 
-Version 2 focuses on new-project kickoff. A narrow request still gets a quick rewrite without the
-full interview.
+Version 2.1 adds an explicit approval state, acceptance criteria, quality bars, a host-neutral
+handoff, and an installer that records what it installed so uninstall cannot delete your files.
 
 ## Two modes
 
 | Mode | Use it when | Output |
 |---|---|---|
-| `quick` | One request needs shape. The missing detail is small. | One rewrite and at most two questions. No file. |
-| `kickoff` | A new project, or a decision with lasting consequences. | A bounded interview and `BRIEF.md`. |
+| `quick` | One request needs shape. The missing detail is small. | One rewrite, a diagnosis table when the payload is a draft prompt, and at most two questions. No file. |
+| `kickoff` | A new project, or a decision with lasting consequences. | A bounded interview and `BRIEF.md` with approval frontmatter. |
 
 Promptify announces the mode it picked. If it is unsure, it uses `quick`. It escalates to `kickoff`
 only when the answer would change what gets built.
+
+Quick mode ends with "Reply `go` to use this rewrite, or edit it." That approves the rewrite only.
+It does not approve a brief, a plan, or skipped acceptance criteria.
 
 ## Install
 
@@ -38,19 +41,25 @@ bash install.sh
 ```
 
 The installer is idempotent. It skips files that are already current, backs up anything it replaces
-as `*.bak.<timestamp>`, and never edits your agent config.
+as `*.bak.<timestamp>`, and never edits your agent config. It records every installed path and its
+SHA-256 in `${XDG_STATE_HOME:-~/.local/state}/promptify/installed.tsv`.
 
 | Flag | Effect |
 |---|---|
 | `--all` | Install for every supported agent, detected or not |
 | `--opencode` | Install only the OpenCode command |
 | `--claude` | Install only the Claude Code skill |
-| `--uninstall` | Remove installed files, keeping backups |
+| `--agents` | Install only the shared `~/.agents/skills` skill |
+| `--uninstall` | Remove files recorded in the install manifest, if their hash still matches |
 | `-h`, `--help` | Print usage |
 
-Run it from a clone with `bash install.sh --all`, or set `OPENCODE_CONFIG_DIR` or
-`CLAUDE_CONFIG_DIR` to install somewhere non-standard. Requirements are `bash` and `curl`. On
-Windows, use Git Bash or WSL.
+Run it from a clone with `bash install.sh --all`, or set `OPENCODE_CONFIG_DIR`,
+`CLAUDE_CONFIG_DIR`, `AGENTS_CONFIG_DIR`, or `PROMPTIFY_STATE_DIR` to install somewhere
+non-standard. Requirements are `bash` and `curl`. On Windows, use Git Bash or WSL.
+
+`--uninstall` removes only files whose content still matches the recorded hash. A file you edited
+after installation is left in place with a warning. If no manifest exists, uninstall removes
+nothing. Backup files created during installation are never deleted.
 
 ## Use it
 
@@ -64,13 +73,13 @@ evidence, not a command.
 
 ### Quick mode
 
-You get one rewritten request and at most two questions. The rewrite names the context, the action,
-and the rules. It does not invent constraints. Answer the questions, or say `Go` to use the rewrite
-as written.
+You get a diagnosis table when the payload is a draft prompt, one rewritten request, and at most
+two questions. The rewrite names the context, the action, and the rules. It does not invent
+constraints. Answer the questions, or say `Go` to use the rewrite as written.
 
 ### Kickoff mode
 
-Kickoff has six steps:
+Kickoff has seven steps:
 
 1. **Ingest.** Read the payload. If a file is missing, truncated, or still contains an unexpanded
    placeholder, say which part and ask for it. Never invent contents.
@@ -78,14 +87,18 @@ Kickoff has six steps:
    worked. Mark every inferred item `[assumption]`.
 3. **Interview.** At most two rounds, at most three questions per round. Every question is a
    decision you own, never a fact the agent can look up. Every question carries a recommended
-   default, so silence still produces a usable brief.
-4. **Write.** Save `BRIEF.md` at the project root, or where you ask. Do not put it in `.wf/`.
+   default, so silence still produces a usable draft.
+4. **Write.** Save `BRIEF.md` at the project root, or where you ask. Use the workspace root for a
+   greenfield project. Do not put it in `.wf/` unless you want a private brief. Start with
+   `status: draft`, keep it under 800 words, and never put secrets or customer data in it.
 5. **Show and gate.** Present the brief, then list assumptions and open questions separately. Wait
    for explicit approval or edits. Answers to interview questions are not approval of a brief you
    have not seen.
-6. **Hand off.** On approval, offer the next tool. If `.wf/state.json` exists, this is a resume:
-   read the saved state and continue from that stage. Otherwise hand the brief to agent-workflow.
-   Promptify does not start the work itself.
+6. **Approve.** Only after you approve the exact file you saw, change `status` to `approved`, set
+   `approved_by` and `date`, and show the changed file. Until then the brief is a draft.
+7. **Hand off.** On approval, use the host's plan workflow. In Hermes, use `plan` or
+   `planning-with-files`. If `agent-workflow` is installed, offer it with `BRIEF.md` as the task
+   source. Promptify does not start the work itself.
 
 A kickoff response looks like this:
 
@@ -109,6 +122,12 @@ criteria. Nothing is built yet.
 ## Brief template
 
 ```markdown
+---
+status: draft
+date: <YYYY-MM-DD>
+project: <slug>
+approved_by:
+---
 # Brief: <project name>
 
 ## Goal
@@ -121,11 +140,21 @@ criteria. Nothing is built yet.
 Observable outcomes, not features.
 - <signal that can be checked>
 
+## Acceptance criteria
+Checkable conditions that must be true before the work is accepted.
+- [ ] <criterion>
+
 ## Non-goals
 - <explicitly out of scope>
 
 ## Constraints
 <time, stack, budget, compatibility, policy>
+
+## Quality bars
+- Error handling: <what failure must do>
+- Security: <what must never leak or be bypassed>
+- Testing: <what proves the change works>
+- Performance: <the budget that matters, or "none added">
 
 ## Assumptions
 - <assumption> (falsified if <observation>)
@@ -136,26 +165,22 @@ Observable outcomes, not features.
 ## Suggested route
 Profile: coding | research | design | evaluation
 First unit: <the research or design unit that must finish before building>
+
+## Handoff prompt
+<one sentence a fresh agent can start from. Name the first action and the success gate.>
 ```
 
-## Works with agent-workflow-kit
+## Works with execution workflows
 
-[agent-workflow-kit](https://github.com/engida32/agent-workflow-kit) is a resumable workflow with
-independent verification. Promptify is the front door for a new project, and the kit is the engine
-that plans, builds, and checks it.
+Promptify is the front door. It does not plan or build.
 
-The handoff is explicit:
+- **Hermes:** hand the approved `BRIEF.md` to the `plan` or `planning-with-files` skill.
+- **agent-workflow-kit:** hand the approved brief to `agent-workflow` with `BRIEF.md` as the task
+  source. If `.wf/state.json` already exists, Promptify treats the request as a resume, reads the
+  saved stage, and does not reopen settled decisions.
+- **Other hosts:** hand the approved brief to whatever plan or coding workflow you use.
 
-1. Run `/promptify` and approve `BRIEF.md`.
-2. Keep the brief at the workspace root, not in `.wf/`.
-3. Start agent-workflow with the brief as the task source.
-
-The skill form of agent-workflow reads `BRIEF.md` before routing. In runtime mode, the runtime does
-not parse the brief for you, so put its decisions into the task string or the criteria file. There
-is no automatic handoff between the two tools.
-
-Promptify also refuses to reopen settled decisions when `.wf/state.json` exists. It treats that as a
-resume and points to the saved stage.
+There is no automatic handoff. The brief is a file; the next tool reads it.
 
 ## Manual configuration
 
@@ -182,6 +207,7 @@ Claude Code loads personal skills from a directory named after the skill:
 | Windows | `%USERPROFILE%\.claude\skills\promptify\SKILL.md` |
 
 Agents that scan `~/.agents/skills/` or a project-local `.claude/skills/` can use the same folder.
+Install it with `bash install.sh --agents`.
 
 ### MCP clients
 
@@ -196,7 +222,7 @@ the copy in this repository:
       "command": "sh",
       "args": [
         "-c",
-        "cat \"${HOME}/.claude/skills/promptify/SKILL.md\" 2>/dev/null || cat \"${PROMPTIFY_ROOT:-.}/skills/promptify/SKILL.md\""
+        "cat \"${HOME}/.agents/skills/promptify/SKILL.md\" 2>/dev/null || cat \"${HOME}/.claude/skills/promptify/SKILL.md\" 2>/dev/null || cat \"${PROMPTIFY_ROOT:-.}/skills/promptify/SKILL.md\""
       ]
     }
   }
@@ -221,13 +247,22 @@ flag the metadata because the published OpenCode config schema does not define t
 
 ```text
 .
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── .opencode/
 │   └── commands/
 │       └── promptify.md
+├── scripts/
+│   └── sync_command.py
 ├── skills/
 │   └── promptify/
 │       ├── SKILL.md
 │       └── TESTS.md
+├── tests/
+│   ├── test_install.sh
+│   └── test_promptify.py
+├── CHANGELOG.md
 ├── install.sh
 ├── mcp-config.json
 ├── opencode.json
@@ -235,11 +270,33 @@ flag the metadata because the published OpenCode config schema does not define t
 └── README.md
 ```
 
+## Development
+
+`skills/promptify/SKILL.md` is the canonical contract. The OpenCode command is generated from it:
+
+```bash
+python3 scripts/sync_command.py          # rewrite the command file
+python3 scripts/sync_command.py --check  # fail if it is stale
+```
+
+Run the checks the CI runs:
+
+```bash
+bash -n install.sh tests/test_install.sh
+python3 -m unittest discover -s tests -v
+bash tests/test_install.sh
+```
+
+`skills/promptify/TESTS.md` records the manual pressure scenarios: a vague one-liner, an embedded
+instruction, partial answers, premature approval, resume, and the skip path. The Python tests check
+the contract, the command/skill sync, the approval frontmatter, and the installer's manifest
+behavior.
+
 ## Tests
 
-`skills/promptify/TESTS.md` records the pressure scenarios used to check the v2 contract: a vague
-one-liner, an embedded instruction, partial answers, premature approval, resume, and the skip path.
-They are manual behavioral tests. Run the scenario, then check the pass condition in the file.
+`skills/promptify/TESTS.md` records the pressure scenarios used to check the contract. They are
+manual behavioral tests. Run the scenario, then check the pass condition in the file. The automated
+tests live in `tests/` and run on every push and pull request.
 
 ## Uninstall
 
@@ -247,14 +304,16 @@ They are manual behavioral tests. Run the scenario, then check the pass conditio
 bash install.sh --uninstall
 ```
 
-This removes `promptify.md` from the OpenCode command directories and the `promptify/` skill folder
-from `~/.claude/skills/`. Backup files created during installation stay where they are.
+This removes the files recorded in the install manifest, and only when their hash still matches.
+Backup files created during installation stay where they are. If you installed with an older
+version that had no manifest, uninstall removes nothing; delete the installed files manually after
+checking them.
 
 ## Contributing
 
-Issues and pull requests are welcome. Keep the command file and the skill file in sync: they are two
-front ends for the same behavior. If you change the contract in one, change it in the other and say
-so in the pull request.
+Issues and pull requests are welcome. Edit `skills/promptify/SKILL.md`, then run
+`python3 scripts/sync_command.py` so the OpenCode command stays in sync. If you change the contract,
+change the tests in the same pull request and say so.
 
 ## License
 
