@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `scripts/lint_brief.py` and `tests/test_lint_brief.py`: a deterministic check of a saved brief
+  against the skill's verification list. Structure is always enforced; falsifiers, question
+  defaults, and quality-bar labels become errors once the brief is approved. Exit codes 0/1/2, with
+  `--json` and `--strict`.
+
 ## 2.1.0 - 2026-11-14
 
 ### Added
