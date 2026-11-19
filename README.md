@@ -1,5 +1,8 @@
 # Promptify
 
+[![CI](https://github.com/engida32/promptify-skill/actions/workflows/ci.yml/badge.svg)](https://github.com/engida32/promptify-skill/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+
 A command and skill for OpenCode, Claude Code, Hermes, and other terminal agents. It turns a rough
 idea into a decision-ready brief before the agent starts building.
 
