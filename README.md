@@ -173,6 +173,27 @@ First unit: <the research or design unit that must finish before building>
 <one sentence a fresh agent can start from. Name the first action and the success gate.>
 ```
 
+## Check a brief before handoff
+
+`scripts/lint_brief.py` runs the verification list from the skill over a saved brief:
+
+```bash
+python3 scripts/lint_brief.py BRIEF.md          # human output
+python3 scripts/lint_brief.py BRIEF.md --json   # machine output
+python3 scripts/lint_brief.py BRIEF.md --strict # fail on warnings too
+```
+
+Exit codes: `0` clean, `1` findings, `2` usage error.
+
+Structure is checked on every run: frontmatter (`status`, `date`, `project`, `approved_by`), the
+eleven sections, checkboxes in acceptance criteria, a prose goal, the route profile, unresolved
+placeholders, accidental secrets, and the 800-word cap. Detail rules (a falsifier on each
+assumption, a default on each open question, all four quality-bar labels) are errors once the brief
+says `status: approved` and warnings while it is a draft, because a draft is still being written.
+
+The linter checks the shape of a brief, not whether its claims are true. It cannot tell you the goal
+is the right goal.
+
 ## Works with execution workflows
 
 Promptify is the front door. It does not plan or build.
@@ -257,6 +278,7 @@ flag the metadata because the published OpenCode config schema does not define t
 │   └── commands/
 │       └── promptify.md
 ├── scripts/
+│   ├── lint_brief.py
 │   └── sync_command.py
 ├── skills/
 │   └── promptify/
@@ -264,6 +286,7 @@ flag the metadata because the published OpenCode config schema does not define t
 │       └── TESTS.md
 ├── tests/
 │   ├── test_install.sh
+│   ├── test_lint_brief.py
 │   └── test_promptify.py
 ├── CHANGELOG.md
 ├── install.sh
